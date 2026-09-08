@@ -5,6 +5,14 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
+local PlayerModule
+local Controls
+
+pcall(function()
+	PlayerModule = require(LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule"))
+	Controls = PlayerModule:GetControls()
+end)
+
 local ENABLED = false
 local TEAM_CHECK = true
 local MAX_TARGET_DISTANCE = 120
@@ -346,6 +354,16 @@ local function plan(enemy)
 				changeCost = clamp(1 - DesiredMove.Unit:Dot(moveOption.Direction.Unit), 0, 2) / 2
 			end
 
+			local currentDistance = flat(enemyPosition - botPosition).Magnitude
+			local farApproachBonus = 0
+
+			if currentDistance > MAX_COMBAT_RANGE + 1 then
+				farApproachBonus = math.max(
+					moveOption.Direction:Dot(towardEnemy),
+					0
+				) * 8
+			end
+
 			local score =
 				hitChance * HIT_WEIGHT
 				- totalThreat * INCOMING_WEIGHT
@@ -353,6 +371,7 @@ local function plan(enemy)
 				+ rangeScore * RANGE_WEIGHT
 				+ sideScore * SIDE_WEIGHT
 				+ approachScore * APPROACH_WEIGHT
+				+ farApproachBonus
 				- moveOption.FallRisk * FALL_WEIGHT
 				- changeCost * MOVEMENT_CHANGE_WEIGHT
 
@@ -425,6 +444,18 @@ local function stopMovement()
 	end
 end
 
+local function setBotControl(active)
+	if Controls then
+		pcall(function()
+			if active then
+				Controls:Disable()
+			else
+				Controls:Enable()
+			end
+		end)
+	end
+end
+
 local function setupCharacter(char)
 	Character = char
 	Humanoid = char:WaitForChild("Humanoid")
@@ -494,6 +525,7 @@ toggle.MouseButton1Click:Connect(function()
 		if Humanoid then
 			Humanoid.AutoRotate = false
 		end
+		setBotControl(true)
 		ensureSword()
 	else
 		toggle.Text = "SWORD BOT: OFF"
@@ -501,22 +533,40 @@ toggle.MouseButton1Click:Connect(function()
 		CurrentTarget = nil
 		targetLabel.Text = "TARGET: NONE"
 		stopMovement()
+		setBotControl(false)
 		if Humanoid then
 			Humanoid.AutoRotate = true
 		end
 	end
 end)
 
+RunService:BindToRenderStep(
+	"LinkedSwordBotMovement",
+	Enum.RenderPriority.Character.Value + 10,
+	function()
+		if not ENABLED or not Character or not Humanoid or not Root or Humanoid.Health <= 0 then
+			return
+		end
+
+		if DesiredMove.Magnitude > 0.001 then
+			Humanoid:Move(DesiredMove.Unit, false)
+		else
+			Humanoid:Move(Vector3.zero, false)
+		end
+
+		if DesiredFace.Magnitude > 0.001 then
+			local position = Root.Position
+			local look = Vector3.new(DesiredFace.X, 0, DesiredFace.Z)
+			if look.Magnitude > 0.001 then
+				Root.CFrame = CFrame.lookAt(position, position + look.Unit, Vector3.yAxis)
+			end
+		end
+	end
+)
+
 RunService.Heartbeat:Connect(function()
 	if not ENABLED or not Character or not Humanoid or not Root or Humanoid.Health <= 0 then
 		return
-	end
-
-	Humanoid:Move(DesiredMove, false)
-
-	if DesiredFace.Magnitude > 0.001 then
-		local position = Root.Position
-		Root.CFrame = CFrame.lookAt(position, position + DesiredFace, Vector3.yAxis)
 	end
 
 	local now = os.clock()
@@ -554,4 +604,11 @@ RunService.Heartbeat:Connect(function()
 	end
 
 	tryAttack(enemy)
+end)
+
+
+Players.PlayerRemoving:Connect(function(player)
+	if CurrentTarget == player then
+		CurrentTarget = nil
+	end
 end)
